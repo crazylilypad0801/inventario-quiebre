@@ -1,0 +1,46 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inventario y riesgo de quiebre</title>
+<style>
+:root{--b:#4f46e5;--bg:#f4f5fb;--t:#1e1b4b;--m:#6b7280;--e:#dc2626}
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--t)}
+header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:22px 32px}header h1{margin:0;font-size:22px}header p{margin:4px 0 0;opacity:.85}
+main{max-width:1150px;margin:auto;padding:24px;display:grid;gap:20px}
+.card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 2px 10px #0001;overflow-x:auto}.card h2{margin:0 0 12px;font-size:16px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.kpi{background:#fff;border-radius:14px;padding:16px;box-shadow:0 2px 10px #0001}.kpi b{display:block;font-size:26px}.kpi span{color:var(--m);font-size:13px}
+button{background:var(--b);color:#fff;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}button.r{background:var(--e)}
+.pill{padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}.ok{background:#dcfce7;color:#166534}.w{background:#fef3c7;color:#92400e}.e{background:#fee2e2;color:#991b1b}.i{background:#e0e7ff;color:#3730a3}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #eee;font-size:14px}
+.banner{margin-top:10px;padding:10px 14px;border-radius:10px;background:#fef3c7;color:#92400e}
+</style></head><body>
+<header><h1>📦 Inventario y riesgo de quiebre</h1><p>Cadena de restaurantes · el sistema recomienda, una persona aprueba, todo queda auditado</p></header>
+<main>
+<div class="grid" id="kpis"></div>
+<div class="card"><label><input type="checkbox" id="fb"> Simular: servicio de pronóstico NO disponible</label> &nbsp; <button onclick="gen()">Recalcular recomendaciones</button><div id="banner"></div></div>
+<div class="card"><h2>Existencias (cantidad · días de cobertura)</h2><div id="stock"></div></div>
+<div class="card"><h2>Recomendaciones</h2><div id="recs"></div></div>
+<div class="card"><h2>Órdenes enviadas al sistema de compras</h2><div id="orders"></div></div>
+<div class="card"><h2>Auditoría</h2><div id="audit"></div></div>
+</main>
+<script>
+const $=i=>document.getElementById(i);
+async function api(p,m='GET',b){const r=await fetch('/api/'+p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});return {ok:r.ok,d:await r.json()}}
+const pill=(t,c)=>`<span class="pill ${c}">${t}</span>`;
+async function load(){
+ const [s,r,a,m,o]=await Promise.all(['stock','recs','audit','metrics','orders'].map(x=>api(x)));
+ const S=s.d;$('fb').checked=!S.forecast_up;
+ $('banner').innerHTML=S.forecast_up?'':'<div class="banner">⚠ Pronóstico caído: se usa el promedio de consumo de 7 días (calidad reducida). Cada recomendación indica su fuente.</div>';
+ const prods=[...new Set(S.stock.map(x=>x.product))],whs=['Norte','Centro','Sur'];
+ $('stock').innerHTML='<table><tr><th>Producto</th>'+whs.map(w=>`<th>${w}</th>`).join('')+'</tr>'+prods.map(p=>'<tr><td>'+p+'</td>'+whs.map(w=>{const x=S.stock.find(y=>y.product===p&&y.warehouse===w);return `<td>${x.qty} ${pill(x.cover+' d',x.cover<3?'e':x.cover<5?'w':'ok')} <a href="#" onclick="edit(${x.id},${x.qty});return false">editar</a></td>`}).join('')+'</tr>').join('')+'</table>';
+ $('recs').innerHTML='<table><tr><th>#</th><th>Producto</th><th>Bodega</th><th>Riesgo</th><th>Acción recomendada</th><th>Fuente</th><th>Estado</th></tr>'+r.d.map(x=>`<tr><td>${x.id}</td><td>${x.product}</td><td>${x.warehouse} (${x.cover} d)</td><td>${pill(x.risk,x.risk==='ALTO'?'e':'w')}</td><td>${x.action==='TRANSFERIR'?'🔁 Transferir '+x.qty+' desde '+x.from_wh:'🛒 Comprar '+x.qty}</td><td>${x.source}</td><td>${x.status==='PENDIENTE'?`<button onclick="dec(${x.id},true)">Aprobar</button> <button class="r" onclick="dec(${x.id},false)">Rechazar</button>`:pill(x.status,x.status==='APROBADA'?'ok':'i')}</td></tr>`).join('')+'</table>';
+ $('orders').innerHTML=o.d.length?'<table><tr><th>#</th><th>Producto</th><th>Bodega</th><th>Cantidad</th><th>Hora</th></tr>'+o.d.map(x=>`<tr><td>${x.id}</td><td>${x.product}</td><td>${x.warehouse}</td><td>${x.qty}</td><td>${x.created}</td></tr>`).join('')+'</table>':'Sin órdenes todavía';
+ $('audit').innerHTML='<table><tr><th>Hora</th><th>Actor</th><th>Evento</th><th>Detalle</th></tr>'+a.d.map(x=>`<tr><td>${x.ts}</td><td>${x.actor}</td><td>${x.event}</td><td>${x.detail}</td></tr>`).join('')+'</table>';
+ const M=m.d,k=[['Pendientes de decisión',M.en_riesgo],['Recomendaciones aprobadas',M.aprobadas],['% aceptación',M.aceptacion_pct==null?'—':M.aceptacion_pct+'%'],['Tiempo medio de aprobación',M.tiempo_aprobacion_s==null?'—':M.tiempo_aprobacion_s+' s'],['Compras urgentes aprobadas',M.compras_urgentes],['Transferencias aprobadas',M.transferencias]];
+ $('kpis').innerHTML=k.map(x=>`<div class="kpi"><b>${x[1]}</b><span>${x[0]}</span></div>`).join('');
+}
+async function gen(){await api('recs/generate','POST');load()}
+async function dec(id,ok){const r=await api('recs/'+id+'/'+(ok?'approve':'reject'),'POST');if(!r.ok)alert(r.d.error);load()}
+async function edit(id,q){const v=prompt('Nueva existencia',q);if(v!==null&&v!==''){await api('stock/set','POST',{id,qty:v});gen()}}
+$('fb').onchange=async e=>{await api('forecast','POST',{up:!e.target.checked});gen()};
+gen();
+</script></body></html>
